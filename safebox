@@ -1,0 +1,122 @@
+#!/bin/bash
+
+# Questions:
+# Q: If pass by parameter, won't the password be visible in history or by ps? 
+# A: Yes, it will be? Use 'history -d $((HISTCMD-1))' to remove last command from history.
+#
+# Q: Will it prevent memory containing unencrypted data from being read?
+# A: ???
+#
+
+# If you have any other questions or suggestion, please contact me
+# at qva5on3@gmail.com
+#
+# Cheers!
+
+usage()
+{
+    echo "Usage: $0 [OPTION]...[MODE] [secret]"
+    echo ""
+    echo "OPTION: [-f file] [-a algorithm] [-p password]"
+    echo "MODE: add|view"
+    echo "secret: a text to encrypt and append in 'add' mode"
+}
+
+# Application configuration 
+SAFEBOX_DIR="${HOME}/.safebox"
+PASSWORD_SOURCE='stdin'
+
+# Defaults
+file="${SAFEBOX_DIR}/.secret"
+algorithm="bf-cbc"
+password=""
+
+# Initialization
+if [ ! -d ${SAFEBOX_DIR} ]
+then
+    mkdir -m 700 ${SAFEBOX_DIR}
+fi
+
+# Arguments handling (getopts is limited only to short names)
+while getopts ":a:f:hp:" OPTION
+do
+    case $OPTION in
+        a) algorithm="${OPTARG}";;
+        f) file="${OPTARG}";;
+        p) password="${OPTARG}";;
+        h) usage; exit 1;;
+    esac    
+done
+
+if [ -z $password ]
+then
+    echo -n "Enter password and press [ENTER]: "
+    read password
+fi
+
+shift $((OPTIND-1))
+
+mode=$1
+
+# Common command & its arguments 
+cmd="openssl enc -base64 -pass ${PASSWORD_SOURCE} -${algorithm}"
+
+# Application mode
+case $mode in
+    add)
+        secret=$2
+
+        if [ -e ${file} ]
+        then
+            content=`${cmd} -d -in ${file} << EOF 2> /dev/null
+${password}
+EOF`
+
+            if test $? != 0
+            then 
+                echo "Cannot add new secret to ${file} (decrypt)."
+                exit 1;
+            fi
+        fi
+
+        ${cmd} -e -out ${file} 2> /dev/null << EOF
+${password}
+${content}
+${secret}
+EOF
+
+        if test $? != 0
+        then
+            echo "Cannot add new secret to ${file} (encrypt)."
+            exit 1;
+        fi
+    ;;
+
+    view)
+        if [ ! -e ${file} ]
+        then
+            echo "File not found: ${file}."
+            exit 1;
+        fi
+
+        ${cmd} -d -in ${file} << EOF &> /dev/null 
+${password}
+EOF
+
+        if test $? != 0
+        then
+            echo "Cannot view secrets stored in ${file}."
+            exit 1;
+        fi
+
+        ${cmd} -d -in ${file} << EOF 2> /dev/null
+${password}
+EOF
+        ;;
+    *)
+        echo "Unknown mode."
+        exit;;
+esac
+
+exit 0
+
