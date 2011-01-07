@@ -17,19 +17,45 @@ usage()
 {
     echo "Usage: $0 [OPTION]...[MODE] [secret]"
     echo ""
-    echo "OPTION: [-f file] [-a algorithm] [-p password]"
-    echo "MODE: add|view"
+    echo "OPTION: [-f file | -n name] [-a algorithm] [-p password]"
+    echo "MODE: add|view|edit"
     echo "secret: a text to encrypt and append in 'add' mode"
+}
+
+check_error_status()
+{
+    if test $? != 0
+    then
+        exit 1
+    fi 
+}
+
+check_error_status_with_message()
+{
+    if test $? != 0
+    then
+        echo ""
+        echo "$1"
+        exit 1
+    fi
 }
 
 # Application configuration 
 SAFEBOX_DIR="${HOME}/.safebox"
 PASSWORD_SOURCE='stdin'
+SAFEBOX_EDITOR='vim'
+
+if [ -z "${EDITOR}" ]
+then
+    export EDITOR ${SAFEBOX_EDITOR}
+fi
 
 # Defaults
+name=''
 file="${SAFEBOX_DIR}/.secret"
 algorithm="bf-cbc"
 password=""
+
 
 # Initialization
 if [ ! -d ${SAFEBOX_DIR} ]
@@ -38,32 +64,47 @@ then
 fi
 
 # Arguments handling (getopts is limited only to short names)
-while getopts ":a:f:hp:" OPTION
+while getopts ":a:f:hn:p:" OPTION
 do
     case $OPTION in
         a) algorithm="${OPTARG}";;
         f) file="${OPTARG}";;
+        n) name="${OPTARG}";;
         p) password="${OPTARG}";;
         h) usage; exit 1;;
     esac    
 done
 
-if [ -z $password ]
+if [ -n "${name}" ]
 then
-    echo -n "Enter password and press [ENTER]: "
-    read password
+    file="${SAFEBOX_DIR}/.${name}"
 fi
 
 shift $((OPTIND-1))
 
 mode=$1
 
+case $mode in
+    view|VIEW|edit|EDIT)
+        if [ ! -e ${file} ]
+        then
+            echo "File not found: ${file}."
+            exit 1;
+        fi;;
+esac
+
+if [ -z "${password}" ]
+then
+    echo -n "Enter password and press [ENTER]: "
+    read password
+fi
+
 # Common command & its arguments 
 cmd="openssl enc -base64 -pass ${PASSWORD_SOURCE} -${algorithm}"
 
-# Application mode
+# Application modes
 case $mode in
-    add)
+    add|ADD)
         secret=$2
 
         if [ -e ${file} ]
@@ -72,11 +113,8 @@ case $mode in
 ${password}
 EOF`
 
-            if test $? != 0
-            then 
-                echo "Cannot add new secret to ${file} (decrypt)."
-                exit 1;
-            fi
+            check_error_status_with_message \
+                "Cannot add new secret to ${file} (decrypt)."
         fi
 
         ${cmd} -e -out ${file} 2> /dev/null << EOF
@@ -85,34 +123,41 @@ ${content}
 ${secret}
 EOF
 
-        if test $? != 0
-        then
-            echo "Cannot add new secret to ${file} (encrypt)."
-            exit 1;
-        fi
+        check_error_status_with_message \
+            "Cannot add new secret to ${file} (encrypt)."
     ;;
 
-    view)
-        if [ ! -e ${file} ]
-        then
-            echo "File not found: ${file}."
-            exit 1;
-        fi
-
-        ${cmd} -d -in ${file} << EOF &> /dev/null 
+    view|VIEW)
+        ${cmd} -d -in ${file} << EOF 2> /dev/null 
 ${password}
 EOF
 
-        if test $? != 0
-        then
-            echo "Cannot view secrets stored in ${file}."
-            exit 1;
-        fi
-
-        ${cmd} -d -in ${file} << EOF 2> /dev/null
-${password}
-EOF
+        check_error_status_with_message \
+            "Cannot view secrets stored in ${file}."
         ;;
+
+   edit|EDIT) 
+        content=`${cmd} -d -in ${file} << EOF 2> /dev/null 
+${password}
+EOF`
+
+        check_error_status_with_message \
+            "Cannot edit secrets stored in ${file} (decrypt)."
+
+        content=`cat << EOF | vipe | cat -
+${content}
+EOF`
+
+        ${cmd} -e -out ${file} 2> /dev/null << EOF
+${password}
+${content}
+${secret}
+EOF
+
+        check_error_status_with_message \
+            "Cannot edit secret in ${file} (encrypt)."
+       ;;
+ 
     *)
         echo "Unknown mode."
         exit;;
