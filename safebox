@@ -96,7 +96,9 @@ esac
 if [ -z "${password}" ]
 then
     echo -n "Enter password and press [ENTER]: "
+    stty -echo
     read password
+    stty echo
 fi
 
 # Common command & its arguments 
